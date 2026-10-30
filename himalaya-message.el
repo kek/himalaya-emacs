@@ -39,6 +39,7 @@
 (require 'message)
 (require 'mm-decode)
 (require 'mm-view)
+(require 'mml)
 (require 'rfc2047)
 (require 'himalaya-process)
 (require 'himalaya-account)
@@ -63,6 +64,24 @@ Examples: 'eww-open-file', 'xwidget-webkit-browse-url', 'browse-url-of-file'."
 (defvar-local himalaya--mime-handles nil
   "MIME handles of the message displayed in the current buffer.")
 
+(defvar-local himalaya--compose-account nil
+  "Account the message of the current buffer is written from.")
+
+(defvar-local himalaya--compose-reply-to nil
+  "Mailbox and id of the message the current buffer replies to, as a
+cons, or nil if it is not a reply.")
+
+(defvar-local himalaya--compose-temp-dirs nil
+  "Temporary directories holding the parts the current buffer attaches.")
+
+(defvar himalaya--template-temp-dirs nil
+  "Temporary directories created while converting a template.")
+
+(defconst himalaya--template-skipped-headers
+  '("Date" "MIME-Version" "Content-Type" "Content-Transfer-Encoding" "Content-Disposition")
+  "Template headers not shown in the message being written, regenerated
+when sending.")
+
 (defun himalaya--extract-headers (msg)
   "Extract MESSAGE headers."
   (with-temp-buffer
@@ -70,14 +89,118 @@ Examples: 'eww-open-file', 'xwidget-webkit-browse-url', 'browse-url-of-file'."
     (goto-char (point-min))
     (mail-header-extract-no-properties)))
 
-(defun himalaya--generate-write-buffer (buffer-name tpl)
-  "Setup to be used to write a message."
-  (switch-to-buffer (generate-new-buffer buffer-name))
-  (insert (plist-get tpl :content))
-  (goto-line (plist-get (plist-get tpl :cursor) :row))
-  (move-to-column (plist-get (plist-get tpl :cursor) :col))
-  (himalaya-message-write-mode)
-  (set-buffer-modified-p nil))
+(defun himalaya--template-headers ()
+  "Return the decoded headers of the current buffer, narrowed to the
+headers, as a string, without the MIME headers."
+  (let (lines)
+    (goto-char (point-min))
+    (while (re-search-forward "^\\([^: \t\n]+\\):[ \t]*" nil t)
+      (let ((name (match-string 1))
+            (start (point)))
+        (forward-line 1)
+        (while (looking-at "[ \t]") (forward-line 1))
+        (unless (member-ignore-case name himalaya--template-skipped-headers)
+          (push (format "%s: %s" name
+                        (himalaya--decode-header
+                         (replace-regexp-in-string
+                          "\n[ \t]+" " " (string-trim-right (buffer-substring start (point))))))
+                lines))))
+    (dolist (name '("To" "Subject"))
+      (unless (seq-some (lambda (line) (string-prefix-p (concat name ":") line t)) lines)
+        (push (concat name ": ") lines)))
+    (concat (string-join (nreverse lines) "\n") "\n")))
+
+(defun himalaya--part-to-mml (handle)
+  "Return the MIME part HANDLE as MML. Text bodies are decoded, other
+parts are saved to a temporary directory, added to
+`himalaya--template-temp-dirs', and referenced by MML tags."
+  (cond
+   ((stringp (car handle))
+    (if (equal (car handle) "multipart/alternative")
+        (himalaya--part-to-mml (or (himalaya--find-part handle "text/plain") (cadr handle)))
+      (mapconcat #'himalaya--part-to-mml (cdr handle) "")))
+   ((and (equal (mm-handle-media-type handle) "text/plain")
+         (not (equal (car (mm-handle-disposition handle)) "attachment")))
+    (let ((charset (or (mail-content-type-get (mm-handle-type handle) 'charset) "utf-8")))
+      (with-temp-buffer
+        (insert (mm-decode-string (mm-get-part handle) (intern (downcase charset))))
+        (mml-quote-region (point-min) (point-max))
+        (buffer-string))))
+   (t
+    (let* ((dir (make-temp-file "himalaya-" t))
+           (file (expand-file-name
+                  (file-name-nondirectory (or (mm-handle-filename handle) "attachment"))
+                  dir)))
+      (push dir himalaya--template-temp-dirs)
+      (mm-save-part-to-file handle file)
+      (with-temp-buffer
+        (mml-insert-empty-tag 'part
+                              'type (mm-handle-media-type handle)
+                              'filename file
+                              'disposition "attachment")
+        (buffer-string))))))
+
+(defun himalaya--strip-cr (raw)
+  "Turn the CRLF line endings of the RAW message into LF."
+  (replace-regexp-in-string "\r$" "" raw))
+
+(defun himalaya--template-to-mml (raw)
+  "Convert the raw RFC 5322 template RAW to the content of a buffer to
+write a message in: decoded headers, a blank line then the body as
+MML."
+  (with-temp-buffer
+    (set-buffer-multibyte nil)
+    (insert (himalaya--strip-cr raw))
+    (goto-char (point-min))
+    (let ((handle (mm-dissect-buffer t t)))
+      (unwind-protect
+          (concat (save-restriction
+                    (mail-narrow-to-head)
+                    (himalaya--template-headers))
+                  "\n"
+                  (himalaya--part-to-mml handle))
+        (mm-destroy-parts handle)))))
+
+(defun himalaya--generate-write-buffer (buffer-name tpl &optional reply-to)
+  "Setup a buffer named BUFFER-NAME to write a message from the raw
+template TPL. REPLY-TO is the mailbox and id of the message replied
+to, as a cons."
+  (let* ((himalaya--template-temp-dirs nil)
+         (content (himalaya--template-to-mml tpl)))
+    (switch-to-buffer (generate-new-buffer buffer-name))
+    (insert content)
+    (himalaya-message-write-mode)
+    (setq himalaya--compose-account himalaya-account)
+    (setq himalaya--compose-reply-to reply-to)
+    (setq himalaya--compose-temp-dirs himalaya--template-temp-dirs)
+    (goto-char (point-min))
+    (if (re-search-forward "^To:[ \t]*$" (save-excursion (message-goto-body) (point)) t)
+        (goto-char (match-end 0))
+      (message-goto-body))
+    (set-buffer-modified-p nil)))
+
+(defun himalaya--delete-compose-temp-dirs ()
+  "Delete the temporary directories of the current buffer."
+  (dolist (dir himalaya--compose-temp-dirs)
+    (delete-directory dir t))
+  (setq himalaya--compose-temp-dirs nil))
+
+(defun himalaya--encode-buffer ()
+  "Return the message of the current buffer as raw RFC 5322 bytes,
+its MML turned into MIME."
+  (let ((content (buffer-substring-no-properties (point-min) (point-max)))
+        (mail-header-separator ""))
+    (with-temp-buffer
+      (insert content)
+      (goto-char (point-min))
+      (save-restriction
+        (message-narrow-to-headers-or-head)
+        (flush-lines "^[^: \t\n]+:[ \t]*$")
+        (unless (mail-fetch-field "Date")
+          (goto-char (point-max))
+          (insert "Date: " (message-make-date) "\n")))
+      (mml-to-mime)
+      (encode-coding-string (buffer-string) 'raw-text-unix))))
 
 (defun himalaya--read-message (id preview callback)
   "Fetch the raw RFC 5322 message matching the envelope ID from the
@@ -86,7 +209,7 @@ a unibyte string. Unless PREVIEW is non-nil, the message is flagged as
 seen."
   (message "Reading message %s…" id)
   (himalaya--run-raw
-   (lambda (msg) (funcall callback (replace-regexp-in-string "\r$" "" msg)))
+   (lambda (msg) (funcall callback (himalaya--strip-cr msg)))
    nil
    "message"
    "read"
@@ -287,12 +410,13 @@ from current account."
   "Open a new buffer with a reply template to the current email.
 If called with \\[universal-argument], email will be REPLY-ALL."
   (interactive "P")
-  (himalaya--reply-template
-   himalaya-id
-   (lambda (tpl)
-     (setq himalaya-reply t)
-     (himalaya--generate-write-buffer (format "*Reply: %s*" himalaya-subject) tpl))
-   reply-all))
+  (let ((id himalaya-id)
+        (mailbox himalaya-mailbox))
+    (himalaya--reply-template
+     id
+     (lambda (tpl)
+       (himalaya--generate-write-buffer (format "*Reply: %s*" himalaya-subject) tpl (cons mailbox id)))
+     reply-all)))
 
 (defun himalaya-forward-current-message ()
   "Open a new buffer with a forward template to the current email."
@@ -300,7 +424,6 @@ If called with \\[universal-argument], email will be REPLY-ALL."
   (himalaya--forward-template
    himalaya-id
    (lambda (tpl)
-     (setq himalaya-reply nil)
      (himalaya--generate-write-buffer (format "*Forward: %s*" himalaya-subject) tpl))))
 
 (defun himalaya--adjacent-envelope-id (id n)
@@ -342,7 +465,6 @@ the flag Seen will not be applied to its envelope."
   (interactive)
   (himalaya--write-template
    (lambda (tpl)
-     (setq himalaya-reply nil)
      (himalaya--generate-write-buffer "*Himalaya New Message*" tpl))))
 
 (defun himalaya-reply-to-message-at-point (&optional reply-all)
@@ -353,7 +475,7 @@ If called with \\[universal-argument], message will be REPLY-ALL."
          (subject (substring-no-properties (elt (tabulated-list-get-entry) 2))))
     (setq himalaya-id id)
     (setq himalaya-subject subject)
-    (himalaya-read-message-reply reply-all)))
+    (himalaya-reply-to-current-message reply-all)))
 
 (defun himalaya-forward-message-at-point ()
   "Pick the envelope at point then forward its associated message."
@@ -362,7 +484,7 @@ If called with \\[universal-argument], message will be REPLY-ALL."
          (subject (substring-no-properties (elt (tabulated-list-get-entry) 2))))
     (setq himalaya-id id)
     (setq himalaya-subject subject)
-    (himalaya-read-message-forward)))
+    (himalaya-forward-current-message)))
 
 (defun himalaya-copy-marked-messages ()
   "Copy message(s) matching marked envelope(s) (or envelope at point)
@@ -419,23 +541,35 @@ the trash, or removed for good when they already are in the trash."
 	 (goto-char prev-point))))))
 
 (defun himalaya-send-buffer ()
-  "Send the current buffer."
+  "Send the current buffer. If it is a reply, flag the message replied
+to as answered."
   (interactive)
-  (himalaya--send-template
-   (buffer-string)
-   (lambda (status)
-     (if himalaya-reply
-	 (himalaya--add-flag
-	  himalaya-id
-	  "Answered"
-	  (lambda (_)
-	    (message "%s" (string-trim status))
-	    (set-buffer-modified-p nil)
-	    (kill-current-buffer)
-	    (himalaya-list-envelopes)))
-       (message "%s" (string-trim status))
-       (set-buffer-modified-p nil)
-       (kill-current-buffer)))))
+  (let ((buffer (current-buffer))
+        (reply-to himalaya--compose-reply-to)
+        (himalaya-account himalaya--compose-account))
+    (himalaya--send-template
+     (himalaya--encode-buffer)
+     (lambda (output)
+       (message "%s" (plist-get output :message))
+       (with-current-buffer buffer
+         (set-buffer-modified-p nil)
+         (kill-buffer))
+       (when reply-to
+         (let ((himalaya-account himalaya-account)
+               (himalaya-mailbox (car reply-to)))
+           (himalaya--add-flag (cdr reply-to) "answered" #'ignore)))))))
+
+(defun himalaya-save-draft ()
+  "Save the current buffer to the drafts mailbox."
+  (interactive)
+  (let ((buffer (current-buffer))
+        (himalaya-account himalaya--compose-account))
+    (himalaya--save-template-draft
+     (himalaya--encode-buffer)
+     (lambda (_)
+       (message "Draft saved")
+       (with-current-buffer buffer
+         (set-buffer-modified-p nil))))))
 
 (defvar himalaya-read-message-mode-map
   (let ((map (make-sparse-keymap)))
@@ -473,11 +607,13 @@ the trash, or removed for good when they already are in the trash."
 (defvar himalaya-message-write-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-c") #'himalaya-send-buffer)
+    (define-key map (kbd "C-c C-d") #'himalaya-save-draft)
     map))
 
 (define-derived-mode himalaya-message-write-mode message-mode "Himalaya-Write"
   "Himalaya message writing mode."
-  (setq mail-header-separator ""))
+  (setq-local mail-header-separator "")
+  (add-hook 'kill-buffer-hook #'himalaya--delete-compose-temp-dirs nil t))
 
 (provide 'himalaya-message)
 ;;; himalaya-message.el ends here

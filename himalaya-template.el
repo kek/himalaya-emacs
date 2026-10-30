@@ -38,52 +38,72 @@
 (require 'himalaya-mailbox)
 
 (defun himalaya--write-template (callback)
-  "Fetch a template for writing a new message using current account."
+  "Fetch a template for writing a new message using current account,
+then call CALLBACK with the raw RFC 5322 template."
   (message "Generating new template…")
-  (himalaya--run
+  (himalaya--run-raw
    callback
    nil
-   "template"
-   "write"
-   (when himalaya-account (list "--account" himalaya-account))))
+   "message"
+   "compose"
+   (when himalaya-account (list "--account" himalaya-account))
+   "--body" ""))
 
 (defun himalaya--reply-template (id callback &optional reply-all)
-  "Fetch a forward template for message matching envelope ID from
- current folder on current account. If REPLY-ALL is non-nil, the
- template will include all recipients in To and Cc headers."
+  "Fetch a reply template for message matching envelope ID from
+current mailbox on current account, then call CALLBACK with the raw
+RFC 5322 template. If REPLY-ALL is non-nil, the template will include
+all recipients in To and Cc headers."
   (message "Generating reply template…")
-  (himalaya--run
+  (himalaya--run-raw
    callback
    nil
-   "template"
+   "message"
    "reply"
    (when himalaya-account (list "--account" himalaya-account))
-   (when himalaya-mailbox (list "--folder" himalaya-mailbox))
+   (when himalaya-mailbox (list "--mailbox" himalaya-mailbox))
    (when reply-all "--all")
+   "--body" ""
    (format "%s" id)))
 
 (defun himalaya--forward-template (id callback)
   "Fetch a forward template for message matching envelope ID from
- current folder on current account."
+current mailbox on current account, then call CALLBACK with the raw
+RFC 5322 template."
   (message "Generating forward template…")
-  (himalaya--run
+  (himalaya--run-raw
    callback
    nil
-   "template"
+   "message"
    "forward"
    (when himalaya-account (list "--account" himalaya-account))
-   (when himalaya-mailbox (list "--folder" himalaya-mailbox))
+   (when himalaya-mailbox (list "--mailbox" himalaya-mailbox))
+   "--body" ""
    (format "%s" id)))
 
 (defun himalaya--send-template (template callback)
-  "Send TEMPLATE."
+  "Send the raw RFC 5322 TEMPLATE using current account. Himalaya CLI
+saves a copy according to its `message.send.save-copy' option."
   (message "Sending message…")
   (himalaya--run
    callback
    template
-   "template"
+   "message"
    "send"
    (when himalaya-account (list "--account" himalaya-account))))
+
+(defun himalaya--save-template-draft (template callback)
+  "Add the raw RFC 5322 TEMPLATE to the drafts mailbox of current
+account, flagged as draft."
+  (message "Saving draft…")
+  (himalaya--run
+   callback
+   template
+   "message"
+   "add"
+   (when himalaya-account (list "--account" himalaya-account))
+   "--mailbox" "drafts"
+   "--flag" "draft"))
 
 (provide 'himalaya-template)
 ;;; himalaya-template.el ends here
