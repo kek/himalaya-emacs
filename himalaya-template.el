@@ -35,7 +35,7 @@
 
 (require 'himalaya-process)
 (require 'himalaya-account)
-(require 'himalaya-folder)
+(require 'himalaya-mailbox)
 
 (defun himalaya--write-template (callback)
   "Fetch a template for writing a new message using current account."
@@ -58,7 +58,7 @@
    "template"
    "reply"
    (when himalaya-account (list "--account" himalaya-account))
-   (when himalaya-folder (list "--folder" himalaya-folder))
+   (when himalaya-mailbox (list "--folder" himalaya-mailbox))
    (when reply-all "--all")
    (format "%s" id)))
 
@@ -72,7 +72,7 @@
    "template"
    "forward"
    (when himalaya-account (list "--account" himalaya-account))
-   (when himalaya-folder (list "--folder" himalaya-folder))
+   (when himalaya-mailbox (list "--folder" himalaya-mailbox))
    (format "%s" id)))
 
 (defun himalaya--send-template (template callback)

@@ -35,7 +35,7 @@
 
 (require 'himalaya-process)
 (require 'himalaya-account)
-(require 'himalaya-folder)
+(require 'himalaya-mailbox)
 
 (defcustom himalaya-unseen-face font-lock-string-face
   "Font face for unseen envelope symbol."
@@ -97,7 +97,7 @@ account."
    "flag"
    "add"
    (when himalaya-account (list "--account" himalaya-account))
-   (when himalaya-folder (list "--folder" himalaya-folder))
+   (when himalaya-mailbox (list "--folder" himalaya-mailbox))
    ids
    flag))
 
@@ -111,7 +111,7 @@ account."
    "flag"
    "remove"
    (when himalaya-account (list "--account" himalaya-account))
-   (when himalaya-folder (list "--folder" himalaya-folder))
+   (when himalaya-mailbox (list "--folder" himalaya-mailbox))
    ids
    flag))
 

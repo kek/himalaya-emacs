@@ -38,7 +38,7 @@
 (require 'message)
 (require 'himalaya-process)
 (require 'himalaya-account)
-(require 'himalaya-folder)
+(require 'himalaya-mailbox)
 (require 'himalaya-envelope-mark)
 (require 'himalaya-flag)
 (require 'himalaya-attachment)
@@ -73,12 +73,13 @@ current folder on current account. If RAW is non-nil, return the raw
 contents of the message including headers."
   (message "Reading message %s…" id)
   (himalaya--run
-   (lambda (msg) (funcall callback (replace-regexp-in-string "" "" msg)))
+   (lambda (msg) (funcall callback (replace-regexp-in-string "
+" "" msg)))
    nil
    "message"
    "read"
    (when himalaya-account (list "--account" himalaya-account))
-   (when himalaya-folder (list "--folder" himalaya-folder))
+   (when himalaya-mailbox (list "--folder" himalaya-mailbox))
    (when preview "--preview")
    (format "%s" id))) ; force id as a string
 
@@ -88,12 +89,13 @@ current folder on current account. If RAW is non-nil, return the raw
 contents of the message including headers."
   (message "Reading raw message %s…" id)
   (himalaya--run-plain
-   (lambda (msg) (funcall callback (replace-regexp-in-string "" "" msg)))
+   (lambda (msg) (funcall callback (replace-regexp-in-string "
+" "" msg)))
    nil
    "message"
    "export"
    (when himalaya-account (list "--account" himalaya-account))
-   (when himalaya-folder (list "--folder" himalaya-folder))
+   (when himalaya-mailbox (list "--folder" himalaya-mailbox))
    "--full"
    (format "%s" id))) ; force id as a string
 
@@ -118,7 +120,7 @@ current folder on current account and view it in a web browser."
      "message"
      "export"
      (when himalaya-account (list "--account" himalaya-account))
-     (when himalaya-folder (list "--folder" himalaya-folder))
+     (when himalaya-mailbox (list "--folder" himalaya-mailbox))
      "--destination"
      temp-dir
      (format "%s" id)))) ; force id as a string
@@ -133,7 +135,7 @@ current account to target FOLDER."
    "message"
    "copy"
    (when himalaya-account (list "--account" himalaya-account))
-   (when himalaya-folder (list "--folder" himalaya-folder))
+   (when himalaya-mailbox (list "--folder" himalaya-mailbox))
    folder
    ids))
 
@@ -147,7 +149,7 @@ current account to target FOLDER."
    "message"
    "move"
    (when himalaya-account (list "--account" himalaya-account))
-   (when himalaya-folder (list "--folder" himalaya-folder))
+   (when himalaya-mailbox (list "--folder" himalaya-mailbox))
    folder
    ids))
 
@@ -161,7 +163,7 @@ current account."
    "message"
    "delete"
    (when himalaya-account (list "--account" himalaya-account))
-   (when himalaya-folder (list "--folder" himalaya-folder))
+   (when himalaya-mailbox (list "--folder" himalaya-mailbox))
    ids))
 
 (defun himalaya--read-current-message (&optional preview pre-hook)
@@ -305,7 +307,7 @@ If called with \\[universal-argument], message will be REPLY-ALL."
   "Copy message(s) matching marked envelope(s) (or envelope at point)
 from current folder of current account to selected folder."
   (interactive)
-  (himalaya--pick-folder
+  (himalaya--pick-mailbox
    "Copy to folder: "
    (lambda (folder)
      (himalaya--copy-messages
@@ -319,7 +321,7 @@ from current folder of current account to selected folder."
   "Move message(s) matching marked envelope(s) (or envelope at point)
 from current folder of current account to selected folder."
   (interactive)
-  (himalaya--pick-folder
+  (himalaya--pick-mailbox
    "Move to folder: "
    (lambda (folder)
      (let ((prev-point (point))

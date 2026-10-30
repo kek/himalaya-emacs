@@ -35,7 +35,7 @@
 
 (require 'himalaya-process)
 (require 'himalaya-account)
-(require 'himalaya-folder)
+(require 'himalaya-mailbox)
 (require 'himalaya-envelope-mark)
 (require 'himalaya-flag)
 (require 'himalaya-message)
@@ -105,7 +105,7 @@ which cannot work with callbacks."
   (himalaya--run-blocking
    "envelope"
    "list"
-   (when himalaya-folder (list "--folder" himalaya-folder))
+   (when himalaya-mailbox (list "--folder" himalaya-mailbox))
    (when himalaya-account (list "--account" himalaya-account))
    (when himalaya-page (list "--page" (format "%s" himalaya-page)))
    (when himalaya-list-envelopes-page-size (list "--page-size" (prin1-to-string himalaya-list-envelopes-page-size)))
@@ -170,8 +170,8 @@ given QUERY."
 (defvar himalaya-list-envelopes-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c a"  ) #'himalaya-switch-account)
-    (define-key map (kbd "C-c f"  ) #'himalaya-switch-folder)
-    (define-key map (kbd "e"      ) #'himalaya-expunge-folder)
+    (define-key map (kbd "C-c f"  ) #'himalaya-switch-mailbox)
+    (define-key map (kbd "e"      ) #'himalaya-expunge-mailbox)
     (define-key map (kbd "f"      ) #'himalaya-list-envelopes-next-page)
     (define-key map (kbd "b"      ) #'himalaya-list-envelopes-prev-page)
     (define-key map (kbd "j"      ) #'himalaya-list-envelopes-at-page)

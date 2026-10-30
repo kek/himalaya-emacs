@@ -42,7 +42,7 @@
    "attachment"
    "download"
    (when himalaya-account (list "--account" himalaya-account))
-   (when himalaya-folder (list "--folder" himalaya-folder))
+   (when himalaya-mailbox (list "--folder" himalaya-mailbox))
    ids))
 
 (defun himalaya-download-marked-attachments ()
