@@ -33,17 +33,49 @@
 
 ;;; Code:
 
-(defun himalaya--download-attachments (ids callback)
-  "Download attachment(s) of message(s) matching envelope IDS."
-  (message "Downloading attachments…")
-  (himalaya--run
-   callback
-   nil
-   "attachment"
-   "download"
-   (when himalaya-account (list "--account" himalaya-account))
-   (when himalaya-folder (list "--folder" himalaya-folder))
-   ids))
+(require 'himalaya-process)
+(require 'himalaya-account)
+(require 'himalaya-mailbox)
+(require 'himalaya-envelope-mark)
+
+(defcustom himalaya-attachment-download-dir nil
+  "Directory where attachments are downloaded. When nil, Himalaya CLI
+uses the `downloads-dir' of its configuration."
+  :type '(choice (const :tag "From Himalaya CLI configuration" nil) directory)
+  :group 'himalaya)
+
+(defun himalaya--download-attachments (ids callback &optional paths)
+  "Download attachment(s) of message(s) matching envelope IDS, one
+message at a time, then call CALLBACK with the downloaded file paths.
+PATHS accumulates the paths of the messages already downloaded."
+  (let ((ids (if (listp ids) ids (list ids))))
+    (if (null ids)
+        (funcall callback (reverse paths))
+      (message "Downloading attachments of message %s…" (car ids))
+      (himalaya--run
+       (lambda (output)
+         (himalaya--download-attachments
+          (cdr ids)
+          callback
+          (append (reverse (mapcar (lambda (attachment) (plist-get attachment :path))
+                                   (plist-get output :attachments)))
+                  paths)))
+       nil
+       "attachment"
+       "download"
+       (when himalaya-account (list "--account" himalaya-account))
+       (when himalaya-mailbox (list "--mailbox" himalaya-mailbox))
+       (when himalaya-attachment-download-dir
+         (list "--dir" (expand-file-name himalaya-attachment-download-dir)))
+       (format "%s" (car ids))))))
+
+(defun himalaya--report-downloads (paths)
+  "Report the downloaded attachment PATHS."
+  (if paths
+      (message "Downloaded %d attachment(s) to %s"
+               (length paths)
+               (string-join (delete-dups (mapcar #'file-name-directory paths)) ", "))
+    (message "No attachment to download")))
 
 (defun himalaya-download-marked-attachments ()
   "Download attachment(s) of message(s) matching marked envelope(s),
@@ -51,17 +83,14 @@ or matching the envelope at point if mark is not set."
   (interactive)
   (himalaya--download-attachments
    (or himalaya-marked-ids (list (tabulated-list-get-id)))
-   (lambda (status)
-     (message "%s" (string-trim status))
+   (lambda (paths)
+     (himalaya--report-downloads paths)
      (himalaya-unmark-all-envelopes t))))
 
 (defun himalaya-download-current-attachments ()
   "Download attachment(s) of message matching the current envelope."
   (interactive)
-  (himalaya--download-attachments
-   himalaya-id
-   (lambda (status)
-     (message "%s" (string-trim status)))))
+  (himalaya--download-attachments himalaya-id #'himalaya--report-downloads))
 
 (provide 'himalaya-attachment)
 ;;; himalaya-attachment.el ends here

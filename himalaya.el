@@ -49,12 +49,21 @@
   :type '(file :must-match t)
   :group 'himalaya)
 
+(defcustom himalaya-log-level nil
+  "Log level passed to Himalaya CLI with `--log-level'. Logs end up
+in the *Himalaya stderr* buffer. When nil, the `RUST_LOG' environment
+variable is consulted instead."
+  :type '(choice (const :tag "Default" nil)
+                 (const "off") (const "error") (const "warn")
+                 (const "info") (const "debug") (const "trace"))
+  :group 'himalaya)
+
 (defun himalaya--update-mode-line ()
-  "Update the mode line with the current account, folder and
+  "Update the mode line with the current account, mailbox and
 envelope listing page."
   (let* ((account (or himalaya-account "-"))
-	 (folder (or himalaya-folder "-"))
-	 (mode-line (format " Account[%s] Folder[%s] Page[%s]" account folder himalaya-page)))
+	 (mailbox (or himalaya-mailbox "-"))
+	 (mode-line (format " Account[%s] Mailbox[%s] Page[%s]" account mailbox himalaya-page)))
     (setq mode-line-process mode-line)))
 
 ;;;###autoload

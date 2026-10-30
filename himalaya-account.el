@@ -42,7 +42,7 @@
   "Fetch all accounts defined in the configuration file."
   (message "Listing accounts…")
   (himalaya--run
-   callback
+   (lambda (output) (funcall callback (plist-get output :accounts)))
    nil
    "account"
    "list"))
@@ -69,7 +69,7 @@ envelopes."
    "Account: "
    (lambda (account)
      (setq himalaya-account account)
-     (setq himalaya-folder nil)
+     (setq himalaya-mailbox nil)
      (setq himalaya-page 1)
      (himalaya--update-mode-line)
      (revert-buffer))))
