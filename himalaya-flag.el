@@ -87,8 +87,11 @@ attachment."
   :type 'text
   :group 'himalaya)
 
+(defconst himalaya--flags '("seen" "answered" "flagged" "draft")
+  "Flags Himalaya CLI can add and remove.")
+
 (defun himalaya--add-flag (ids flag callback)
-  "Add FLAG to envelopes IDS from the current folder of the current
+  "Add FLAG to envelopes IDS from the current mailbox of the current
 account."
   (message "Adding flag %s…" flag)
   (himalaya--run
@@ -97,23 +100,23 @@ account."
    "flag"
    "add"
    (when himalaya-account (list "--account" himalaya-account))
-   (when himalaya-mailbox (list "--folder" himalaya-mailbox))
-   ids
-   flag))
+   (when himalaya-mailbox (list "--mailbox" himalaya-mailbox))
+   "--flag" flag
+   ids))
 
 (defun himalaya--remove-flag (ids flag callback)
-  "Remove FLAG to envelopes IDS from the current folder of the current
-account."
-  (message "Adding flag %s…" flag)
+  "Remove FLAG from envelopes IDS from the current mailbox of the
+current account."
+  (message "Removing flag %s…" flag)
   (himalaya--run
    callback
    nil
    "flag"
    "remove"
    (when himalaya-account (list "--account" himalaya-account))
-   (when himalaya-mailbox (list "--folder" himalaya-mailbox))
-   ids
-   flag))
+   (when himalaya-mailbox (list "--mailbox" himalaya-mailbox))
+   "--flag" flag
+   ids))
 
 (defun himalaya--flag-symbols (flags has-attachment)
   "Generate a display string for FLAGS, a list of IANA flag names."
@@ -130,12 +133,12 @@ account."
   (interactive)
   (let ((prev-point (point))
 	(ids (or himalaya-marked-ids (list (tabulated-list-get-id))))
-	(flag (completing-read "Add flag: " (list "Seen" "Answered" "Flagged" "Deleted" "Drafts"))))
+	(flag (completing-read "Add flag: " himalaya--flags nil t)))
     (himalaya--add-flag
      ids
      flag
-     (lambda (status)
-       (message "%s" (string-trim status))
+     (lambda (output)
+       (message "Flag %s added to %d message(s)" flag (plist-get output :count))
        (himalaya-unmark-all-envelopes t)
        (revert-buffer)
        (goto-char prev-point)))))
@@ -146,12 +149,12 @@ account."
   (interactive)
   (let ((prev-point (point))
 	(ids (or himalaya-marked-ids (list (tabulated-list-get-id))))
-	(flag (completing-read "Remove flag: " (list "Seen" "Answered" "Flagged" "Deleted" "Drafts"))))
+	(flag (completing-read "Remove flag: " himalaya--flags nil t)))
     (himalaya--remove-flag
      ids
      flag
-     (lambda (status)
-       (message "%s" (string-trim status))
+     (lambda (output)
+       (message "Flag %s removed from %d message(s)" flag (plist-get output :count))
        (himalaya-unmark-all-envelopes t)
        (revert-buffer)
        (goto-char prev-point)))))

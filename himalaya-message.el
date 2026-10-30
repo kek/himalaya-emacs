@@ -154,37 +154,38 @@ displayed inline, other parts are inserted as buttons saving them."
     (mm-destroy-parts himalaya--mime-handles)
     (setq himalaya--mime-handles nil)))
 
-(defun himalaya--copy-messages (ids folder callback)
-  "Copy message(s) matching envelope IDS from current folder of
-current account to target FOLDER."
-  (message "Copying message(s) to %s…" folder)
+(defun himalaya--copy-messages (ids mailbox callback)
+  "Copy message(s) matching envelope IDS from current mailbox of
+current account to target MAILBOX."
+  (message "Copying message(s) to %s…" mailbox)
   (himalaya--run
    callback
    nil
    "message"
    "copy"
    (when himalaya-account (list "--account" himalaya-account))
-   (when himalaya-mailbox (list "--folder" himalaya-mailbox))
-   folder
+   (when himalaya-mailbox (list "--from" himalaya-mailbox))
+   "--to" mailbox
    ids))
 
-(defun himalaya--move-messages (ids folder callback)
-  "Move message(s) matching envelope IDS from current folder of
-current account to target FOLDER."
-  (message "Moving message(s) to %s…" folder)
+(defun himalaya--move-messages (ids mailbox callback)
+  "Move message(s) matching envelope IDS from current mailbox of
+current account to target MAILBOX."
+  (message "Moving message(s) to %s…" mailbox)
   (himalaya--run
    callback
    nil
    "message"
    "move"
    (when himalaya-account (list "--account" himalaya-account))
-   (when himalaya-mailbox (list "--folder" himalaya-mailbox))
-   folder
+   (when himalaya-mailbox (list "--from" himalaya-mailbox))
+   "--to" mailbox
    ids))
 
 (defun himalaya--delete-messages (ids callback)
-  "Delete message(s) matching envelope IDS from current folder of
-current account."
+  "Delete message(s) matching envelope IDS from current mailbox of
+current account. Himalaya CLI moves them to the trash, or removes them
+for good when they already are in the trash."
   (message "Deleting message(s)…")
   (himalaya--run
    callback
@@ -192,7 +193,7 @@ current account."
    "message"
    "delete"
    (when himalaya-account (list "--account" himalaya-account))
-   (when himalaya-mailbox (list "--folder" himalaya-mailbox))
+   (when himalaya-mailbox (list "--mailbox" himalaya-mailbox))
    ids))
 
 (defun himalaya--read-current-message (&optional preview pre-hook)
@@ -365,39 +366,40 @@ If called with \\[universal-argument], message will be REPLY-ALL."
 
 (defun himalaya-copy-marked-messages ()
   "Copy message(s) matching marked envelope(s) (or envelope at point)
-from current folder of current account to selected folder."
+from current mailbox of current account to selected mailbox."
   (interactive)
   (himalaya--pick-mailbox
-   "Copy to folder: "
-   (lambda (folder)
+   "Copy to mailbox: "
+   (lambda (mailbox)
      (himalaya--copy-messages
       (or himalaya-marked-ids (list (tabulated-list-get-id)))
-      folder
-      (lambda (status)
-	(message "%s" (string-trim status))
+      mailbox
+      (lambda (output)
+	(message "%s" (plist-get output :message))
 	(himalaya-unmark-all-envelopes t))))))
 
 (defun himalaya-move-marked-messages ()
   "Move message(s) matching marked envelope(s) (or envelope at point)
-from current folder of current account to selected folder."
+from current mailbox of current account to selected mailbox."
   (interactive)
   (himalaya--pick-mailbox
-   "Move to folder: "
-   (lambda (folder)
+   "Move to mailbox: "
+   (lambda (mailbox)
      (let ((prev-point (point))
 	   (ids (or himalaya-marked-ids (list (tabulated-list-get-id)))))
        (himalaya--move-messages
 	ids
-	folder
-	(lambda (status)
-	  (message "%s" (string-trim status))
+	mailbox
+	(lambda (output)
+	  (message "%s" (plist-get output :message))
 	  (himalaya-unmark-all-envelopes t)
 	  (revert-buffer)
 	  (goto-char prev-point)))))))
 
 (defun himalaya-delete-marked-messages ()
   "Delete message(s) matching marked envelope(s) (or envelope at
-point) from current folder of current account."
+point) from current mailbox of current account. Messages are moved to
+the trash, or removed for good when they already are in the trash."
   (interactive)
   (let* ((prev-point (point))
 	 (envelope (tabulated-list-get-entry))
@@ -406,8 +408,12 @@ point) from current folder of current account."
     (when (y-or-n-p (format "Delete message(s) %s? " subject-or-ids))
       (himalaya--delete-messages
        (or himalaya-marked-ids (tabulated-list-get-id))
-       (lambda (status)
-	 (message "%s" (string-trim status))
+       (lambda (output)
+	 (message "%s"
+                  (pcase (plist-get output :action)
+                    ("moved-to-trash" (format "%d message(s) moved to trash" (plist-get output :count)))
+                    ("flagged" (format "%d message(s) flagged as deleted, expunge to remove them" (plist-get output :count)))
+                    (_ (format "%d message(s) deleted" (plist-get output :count)))))
 	 (himalaya-unmark-all-envelopes t)
 	 (revert-buffer)
 	 (goto-char prev-point))))))
