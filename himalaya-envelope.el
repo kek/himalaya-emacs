@@ -33,6 +33,7 @@
 
 ;;; Code:
 
+(require 'iso8601)
 (require 'himalaya-process)
 (require 'himalaya-account)
 (require 'himalaya-mailbox)
@@ -50,6 +51,17 @@
 (defcustom himalaya-list-envelopes-page-size 25
   "The number of envelopes to return per envelope list page."
   :type 'number
+  :group 'himalaya)
+
+(defcustom himalaya-list-envelopes-has-attachment t
+  "Whether to show which envelopes carry attachments, which costs an
+extra lookup per envelope on some backends."
+  :type 'boolean
+  :group 'himalaya)
+
+(defcustom himalaya-date-format "%Y-%m-%d %H:%M"
+  "Format of the dates in the envelope list, see `format-time-string'."
+  :type 'string
   :group 'himalaya)
 
 (defcustom himalaya-id-face font-lock-variable-name-face
@@ -99,17 +111,21 @@
 
 (defun himalaya--list-envelopes ()
   "Fetch envelopes from the current account in the current
-folder. Paginate using the current page of global page size. This
-function is blocking because it is used by 'tabulated-list-entries'
-which cannot work with callbacks."
-  (himalaya--run-blocking
-   "envelope"
-   "list"
-   (when himalaya-mailbox (list "--folder" himalaya-mailbox))
-   (when himalaya-account (list "--account" himalaya-account))
-   (when himalaya-page (list "--page" (format "%s" himalaya-page)))
-   (when himalaya-list-envelopes-page-size (list "--page-size" (prin1-to-string himalaya-list-envelopes-page-size)))
-   (when himalaya-list-envelopes-query himalaya-list-envelopes-query)))
+mailbox. Paginate using the current page of global page size. When a
+query is set, search envelopes instead. This function is blocking
+because it is used by 'tabulated-list-entries' which cannot work with
+callbacks."
+  (plist-get
+   (himalaya--run-blocking
+    "envelope"
+    (if himalaya-list-envelopes-query "search" "list")
+    (when himalaya-mailbox (list "--mailbox" himalaya-mailbox))
+    (when himalaya-account (list "--account" himalaya-account))
+    (when himalaya-page (list "--page" (format "%s" himalaya-page)))
+    (when himalaya-list-envelopes-page-size (list "--page-size" (prin1-to-string himalaya-list-envelopes-page-size)))
+    (when himalaya-list-envelopes-has-attachment "--has-attachment")
+    himalaya-list-envelopes-query)
+   :envelopes))
 
 (defun himalaya--build-envelopes-table ()
   "Build the envelopes table."
@@ -124,44 +140,59 @@ which cannot work with callbacks."
 	(plist-get email :id)
         (vector
          (propertize (plist-get email :id) 'face himalaya-id-face)
-         (himalaya--flag-symbols (plist-get email :flags) (plist-get email :has_attachment))
+         (himalaya--flag-symbols (himalaya--envelope-flags email) (plist-get email :hasAttachment))
          (plist-get email :subject)
          (himalaya--build-envelopes-table-sender-column email)
-         (propertize (plist-get email :date) 'face himalaya-date-face)))
+         (propertize (himalaya--format-date (plist-get email :date)) 'face himalaya-date-face)))
        entries))
     (if himalaya-list-envelopes-order entries (nreverse entries))))
 
+(defun himalaya--envelope-flags (email)
+  "Return the flags of EMAIL as a list of IANA names such as \"seen\".
+Flags without an IANA name are returned as is."
+  (mapcar (lambda (flag)
+            (let ((iana (plist-get flag :iana)))
+              (if (stringp iana) iana (plist-get flag :raw))))
+          (plist-get email :flags)))
+
+(defun himalaya--format-date (date)
+  "Format the RFC 3339 DATE using `himalaya-date-format'."
+  (if (stringp date)
+      (format-time-string himalaya-date-format (encode-time (iso8601-parse date)))
+    ""))
+
 (defun himalaya--build-envelopes-table-sender-column (email)
   "Build the sender column of the envelopes table."
-  (let* ((from (plist-get email :from))
+  (let* ((from (car (plist-get email :from)))
          (name (plist-get from :name))
-         (addr (plist-get from :addr)))
-    (propertize (if (eq name :null) addr name) 'face himalaya-sender-face)))
+         (addr (plist-get from :email)))
+    (propertize (if (stringp name) name (or addr "")) 'face himalaya-sender-face)))
 
 (defun himalaya-list-envelopes-next-page ()
-  "Go to the next envelope listing page of the current folder."
+  "Go to the next envelope listing page of the current mailbox."
   (interactive)
   (setq himalaya-page (1+ himalaya-page))
   (himalaya--update-mode-line)
   (revert-buffer))
 
 (defun himalaya-list-envelopes-prev-page ()
-  "Go to the previous envelopes listing page of the current folder."
+  "Go to the previous envelopes listing page of the current mailbox."
   (interactive)
   (setq himalaya-page (max 1 (1- himalaya-page)))
   (himalaya--update-mode-line)
   (revert-buffer))
 
 (defun himalaya-list-envelopes-at-page (page)
-  "Jump to envelopes listing PAGE of the current folder."
+  "Jump to envelopes listing PAGE of the current mailbox."
   (interactive "nJump to page: ")
   (setq himalaya-page (max 1 page))
   (himalaya--update-mode-line)
   (revert-buffer))
 
 (defun himalaya-filter-and-sort-envelopes (query)
-  "Filter and sort envelopes of the current folder matching the
-given QUERY."
+  "Filter and sort envelopes of the current mailbox matching the
+given QUERY, for example \"from alice and not flag seen order by date
+asc\". See `himalaya envelope search --help' for the query language."
   (interactive "MQuery: ")
   (setq himalaya-list-envelopes-query (if (string-empty-p query) nil query))
   (himalaya--update-mode-line)
@@ -196,11 +227,11 @@ given QUERY."
   "Himalaya envelope listing mode."
   (setq tabulated-list-format
 	(vector
-         (list "ID" 5 nil :right-align t)
+         (list "ID" 7 nil :right-align t)
          (list "Flags" 7 nil)
          (list "Subject" himalaya-subject-width nil)
          (list "From" himalaya-from-width nil)
-         (list "Date" 19 nil)))
+         (list "Date" (length (format-time-string himalaya-date-format)) nil)))
   (setq tabulated-list-sort-key nil)
   (setq tabulated-list-entries #'himalaya--build-envelopes-table)
   (setq tabulated-list-padding 1)
@@ -209,7 +240,7 @@ given QUERY."
 
 ;;;###autoload
 (defun himalaya-list-envelopes ()
-  "Display envelopes from the current folder of the current account
+  "Display envelopes from the current mailbox of the current account
 in a table."
   (interactive)
   (switch-to-buffer "*Himalaya Envelopes*")

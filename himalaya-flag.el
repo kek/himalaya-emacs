@@ -116,12 +116,12 @@ account."
    flag))
 
 (defun himalaya--flag-symbols (flags has-attachment)
-  "Generate a display string for FLAGS."
+  "Generate a display string for FLAGS, a list of IANA flag names."
   (concat
-   (if (member "Seen" flags) " " (propertize himalaya-unseen-symbol 'face himalaya-unseen-face))
-   (if (member "Answered" flags) himalaya-answered-symbol " ")
-   (if (member "Flagged" flags) (propertize himalaya-flagged-symbol 'face himalaya-flagged-face) " ")
-   (if (member "Deleted" flags) (propertize himalaya-deleted-symbol 'face himalaya-deleted-face) " ")
+   (if (member "seen" flags) " " (propertize himalaya-unseen-symbol 'face himalaya-unseen-face))
+   (if (member "answered" flags) himalaya-answered-symbol " ")
+   (if (member "flagged" flags) (propertize himalaya-flagged-symbol 'face himalaya-flagged-face) " ")
+   (if (member "deleted" flags) (propertize himalaya-deleted-symbol 'face himalaya-deleted-face) " ")
    (if (eq has-attachment t) (propertize himalaya-attachment-symbol 'face himalaya-attachment-face) " ")))
 
 (defun himalaya-add-flag-marked-envelopes ()
