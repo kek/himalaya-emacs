@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added `himalaya-log-level` option, passed to Himalaya CLI as `--log-level`.
+- Added `himalaya-date-format` option to format envelope dates.
+- Added `himalaya-list-envelopes-has-attachment` option to disable the attachment lookup.
+- Added `himalaya-attachment-download-dir` option to override the download directory.
+- Added `himalaya-message-headers` option listing the headers shown when reading a message.
+- Added `C-c C-d` message writing keybind to save the message as a draft.
+- Added buttons saving the attachments of a read message.
+
+### Changed
+
+- Adjusted API to match Himalaya CLI `v2`, which is now required.
+- Renamed folders to mailboxes, following Himalaya CLI: `himalaya-folder` is now `himalaya-mailbox`, `himalaya-switch-folder` is now `himalaya-switch-mailbox` and `himalaya-expunge-folder` is now `himalaya-expunge-mailbox`. The old names are obsolete aliases. The file `himalaya-folder.el` is now `himalaya-mailbox.el`.
+- Messages are rendered by Emacs from their raw MIME (`mm-decode`), HTML parts included, and composed with Emacs MML.
+- Deleting messages moves them to the trash, as Himalaya CLI `message delete` does.
+- Expunging uses the IMAP-specific API, the only one offering it.
+- Flags are lowercase IANA names (`seen`, `answered`, `flagged`, `draft`). The deleted flag can no longer be added or removed.
+- Next and previous message follow the envelope list.
+- Errors show the message reported by Himalaya CLI.
+
+### Fixed
+
+- Fixed replying to and forwarding the message at point from the envelope list.
+- Fixed expunging, which failed before asking for confirmation.
+
 ## [1.0] - 2023-02-09
 
 ### Added

@@ -3,6 +3,26 @@
 
   Emacs front-end for the email client [[https://github.com/pimalaya/himalaya][Himalaya CLI]].
 
+** Requirements
+
+   - Emacs 27.1 or later.
+   - Himalaya CLI 2.0 or later. For Himalaya CLI 1.x, use
+     =himalaya-emacs= 1.2.0.
+
+   Messages are rendered and composed with Emacs' own MIME support
+   (=mm-decode= and MML), so no other tool is needed.
+
+   Some commands rely on mailbox roles: deleting moves messages to the
+   =trash= mailbox, and saving a draft adds it to the =drafts= one. When
+   your backend does not report these roles, set them in your Himalaya
+   CLI configuration, for example:
+
+   #+begin_src toml
+   [accounts.gmail]
+   mailbox.alias.trash = "[Gmail]/Trash"
+   mailbox.alias.drafts = "[Gmail]/Drafts"
+   #+end_src
+
 ** Installation
 
    =himalaya-emacs= is available on MELPA.
@@ -44,7 +64,7 @@
    | =j=       | Jump to page                                                |
    | =C-c C-s= | Filter and sort query according to the given query          |
    | =C-c a=   | Switch account                                              |
-   | =C-c f=   | Switch folder                                               |
+   | =C-c f=   | Switch mailbox                                              |
    | =C-c +=   | Add flag to marked envelopes (or envelope at point)         |
    | =C-c -=   | Remove flag from marked envelopes (or envelope at point)    |
    | =R=       | Reply to message at cursor                                  |
@@ -54,8 +74,15 @@
    | =C=       | Copy marked messages (or message at cursor)                 |
    | =M=       | Move marked messages (or message at cursor)                 |
    | =D=       | Delete marked messages (or message at cursor)               |
-   | =e=       | Expunge current folder                                      |
+   | =e=       | Expunge current mailbox (IMAP only)                         |
    | =RET=     | Read message at cursor                                      |
+
+   Deleting moves messages to the trash, or removes them for good when
+   they already are in the trash.
+
+   The query language of =C-c C-s= is the one of =himalaya envelope
+   search=, for example =from alice and not flag seen order by date
+   asc=.
 
 ** Read message
 
@@ -70,7 +97,13 @@
    | =r= | Reply to message         |
    | =f= | Forward message          |
    | =R= | View raw message         |
+   | =h= | View HTML part           |
    | =q= | Kill buffer              |
+
+   Text and HTML parts are displayed inline, using
+   =mm-text-html-renderer= for HTML. Set =mm-discouraged-alternatives=
+   to ='("text/html")= to prefer plain text. Other parts are shown as
+   buttons saving them.
 
 ** Reply all
 
@@ -79,8 +112,12 @@
 
 ** Write new message
 
-   When writing a new message or a reply, press =C-c C-c= to send it
-   or =C-c C-k= to delete it.
+   When writing a new message or a reply, press =C-c C-c= to send it,
+   =C-c C-d= to save it as a draft or =C-c C-k= to delete it.
+
+   The buffer is a =message-mode= buffer using MML, so =C-c C-a= attaches
+   files. Himalaya CLI saves a copy of sent messages according to its
+   =message.send.save-copy= option.
 
 ** Extensions
 
