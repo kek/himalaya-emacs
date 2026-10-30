@@ -34,8 +34,12 @@
 ;;; Code:
 
 (require 'subr-x)
+(require 'seq)
 (require 'mailheader)
 (require 'message)
+(require 'mm-decode)
+(require 'mm-view)
+(require 'rfc2047)
 (require 'himalaya-process)
 (require 'himalaya-account)
 (require 'himalaya-mailbox)
@@ -50,6 +54,14 @@ This should be a function that takes a file path as an argument.
 Examples: 'eww-open-file', 'xwidget-webkit-browse-url', 'browse-url-of-file'."
   :type 'function
   :group 'himalaya)
+
+(defcustom himalaya-message-headers '("From" "To" "Cc" "Date" "Subject")
+  "Headers to display when reading a message, in order."
+  :type '(repeat string)
+  :group 'himalaya)
+
+(defvar-local himalaya--mime-handles nil
+  "MIME handles of the message displayed in the current buffer.")
 
 (defun himalaya--extract-headers (msg)
   "Extract MESSAGE headers."
@@ -68,62 +80,79 @@ Examples: 'eww-open-file', 'xwidget-webkit-browse-url', 'browse-url-of-file'."
   (set-buffer-modified-p nil))
 
 (defun himalaya--read-message (id preview callback)
-  "Return the contents of message matching the envelope ID from
-current folder on current account. If RAW is non-nil, return the raw
-contents of the message including headers."
+  "Fetch the raw RFC 5322 message matching the envelope ID from the
+current mailbox on the current account, then call CALLBACK with it as
+a unibyte string. Unless PREVIEW is non-nil, the message is flagged as
+seen."
   (message "Reading message %s…" id)
-  (himalaya--run
-   (lambda (msg) (funcall callback (replace-regexp-in-string "
-" "" msg)))
+  (himalaya--run-raw
+   (lambda (msg) (funcall callback (replace-regexp-in-string "\r$" "" msg)))
    nil
    "message"
    "read"
    (when himalaya-account (list "--account" himalaya-account))
-   (when himalaya-mailbox (list "--folder" himalaya-mailbox))
-   (when preview "--preview")
+   (when himalaya-mailbox (list "--mailbox" himalaya-mailbox))
+   "--raw"
+   (unless preview "--seen")
    (format "%s" id))) ; force id as a string
 
-(defun himalaya--read-message-raw (id callback)
-  "Return the contents of message matching the envelope ID from
-current folder on current account. If RAW is non-nil, return the raw
-contents of the message including headers."
-  (message "Reading raw message %s…" id)
-  (himalaya--run-plain
-   (lambda (msg) (funcall callback (replace-regexp-in-string "
-" "" msg)))
-   nil
-   "message"
-   "export"
-   (when himalaya-account (list "--account" himalaya-account))
-   (when himalaya-mailbox (list "--folder" himalaya-mailbox))
-   "--full"
-   (format "%s" id))) ; force id as a string
+(defun himalaya--decode-header (value)
+  "Decode the raw header VALUE, RFC 2047 encoded words included."
+  (when value
+    (rfc2047-decode-string (decode-coding-string value 'utf-8))))
 
-(defun himalaya--read-message-html (id callback)
-  "Export the HTML version of message matching the envelope ID from
-current folder on current account and view it in a web browser."
-  (message "Reading HTML message %s…" id)
-  (let ((temp-dir (make-temp-file "himalaya-html-" t)))
-    (message "Exporting to directory: %s" temp-dir)
-    (himalaya--run-plain
-     (lambda (output)
-       (let ((html-file (expand-file-name "index.html" temp-dir)))
-         (if (file-exists-p html-file)
-             (let ((file-size (nth 7 (file-attributes html-file))))
-               (if (> file-size 0)
-                   (funcall callback html-file)
-                 (message "HTML file exists but is empty. Output: %s" output)
-                 (error "HTML export failed: file is empty")))
-           (message "HTML file not created. Output: %s" output)
-           (error "HTML export failed: file not created"))))
-     nil
-     "message"
-     "export"
-     (when himalaya-account (list "--account" himalaya-account))
-     (when himalaya-mailbox (list "--folder" himalaya-mailbox))
-     "--destination"
-     temp-dir
-     (format "%s" id)))) ; force id as a string
+(defun himalaya--dissect-message (raw)
+  "Dissect the RAW message. Return a cons of the decoded headers to
+display, as an alist, and the MIME handle of the message."
+  (with-temp-buffer
+    (set-buffer-multibyte nil)
+    (insert raw)
+    (goto-char (point-min))
+    (cons (save-restriction
+            (mail-narrow-to-head)
+            (mapcar (lambda (name) (cons name (himalaya--decode-header (mail-fetch-field name))))
+                    himalaya-message-headers))
+          (mm-dissect-buffer t t))))
+
+(defun himalaya--insert-part (handle)
+  "Insert the MIME part HANDLE at point. Parts Emacs can display are
+displayed inline, other parts are inserted as buttons saving them."
+  (cond
+   ((stringp (car handle))
+    (let ((parts (cdr handle)))
+      (pcase (car handle)
+        ("multipart/alternative"
+         (himalaya--insert-part (or (mm-preferred-alternative parts) (car parts))))
+        ;; the first part is the root, the others being what it refers to
+        ("multipart/related" (himalaya--insert-part (car parts)))
+        (_ (mapc #'himalaya--insert-part parts)))))
+   ((and (not (equal (car (mm-handle-disposition handle)) "attachment"))
+         (mm-inlinable-p handle)
+         (mm-inlined-p handle))
+    (unless (bolp) (insert "\n"))
+    (save-restriction
+      (narrow-to-region (point) (point))
+      (mm-display-inline handle)
+      (goto-char (point-max))))
+   (t
+    (unless (bolp) (insert "\n"))
+    (insert-text-button
+     (format "[%s, %s]" (or (mm-handle-filename handle) "attachment") (mm-handle-media-type handle))
+     'action (lambda (_) (mm-save-part handle))
+     'help-echo "Save this part")
+    (insert "\n"))))
+
+(defun himalaya--find-part (handle type)
+  "Find the first part of MIME TYPE in HANDLE."
+  (if (stringp (car handle))
+      (seq-some (lambda (part) (himalaya--find-part part type)) (cdr handle))
+    (when (equal (mm-handle-media-type handle) type) handle)))
+
+(defun himalaya--destroy-mime-handles ()
+  "Free the MIME handles of the current buffer."
+  (when himalaya--mime-handles
+    (mm-destroy-parts himalaya--mime-handles)
+    (setq himalaya--mime-handles nil)))
 
 (defun himalaya--copy-messages (ids folder callback)
   "Copy message(s) matching envelope IDS from current folder of
@@ -167,33 +196,42 @@ current account."
    ids))
 
 (defun himalaya--read-current-message (&optional preview pre-hook)
-  "Read message matching current envelope id in current folder from
+  "Read message matching current envelope id in current mailbox from
 current account."
   (himalaya--read-message
    himalaya-id
    preview
    (lambda (msg)
      (when pre-hook (funcall pre-hook))
-     (let* ((headers (himalaya--extract-headers msg))
-	    (subject (alist-get 'subject headers)))
+     (let* ((dissected (himalaya--dissect-message msg))
+	    (headers (car dissected))
+	    (subject (or (cdr (assoc "Subject" headers)) "")))
        (switch-to-buffer (format "*%s*" subject))
-       (erase-buffer)
-       (insert msg)
+       (let ((inhibit-read-only t))
+         (himalaya-read-message-mode)
+         (erase-buffer)
+         (setq himalaya--mime-handles (cdr dissected))
+         (dolist (header headers)
+           (when (cdr header)
+             (insert (propertize (concat (car header) ":") 'face himalaya-headers-face)
+                     " " (cdr header) "\n")))
+         (insert "\n")
+         (himalaya--insert-part himalaya--mime-handles))
        (set-buffer-modified-p nil)
-       (himalaya-read-message-mode)
        (goto-char (point-min))
-       (setq buffer-read-only t)
        (setq himalaya-subject subject)))))
 
 (defun himalaya--read-current-message-raw (&optional pre-hook)
-  "Read raw message matching current envelope id in current folder
+  "Read raw message matching current envelope id in current mailbox
 from current account."
-  (himalaya--read-message-raw
+  (himalaya--read-message
    himalaya-id
+   t
    (lambda (msg)
      (when pre-hook (funcall pre-hook))
-     (let* ((headers (himalaya--extract-headers msg))
-	    (subject (alist-get 'subject headers)))
+     (let* ((msg (decode-coding-string msg 'utf-8))
+            (headers (himalaya--extract-headers msg))
+	    (subject (himalaya--decode-header (alist-get 'subject headers))))
        (switch-to-buffer (format "*Raw: %s*" subject))
        (let ((inhibit-read-only t))
 	 (erase-buffer)
@@ -202,15 +240,6 @@ from current account."
 	 (himalaya-read-message-raw-mode)
 	 (goto-char (point-min))
 	 (setq himalaya-subject subject))))))
-
-(defun himalaya--read-current-message-html (&optional pre-hook)
-  "Read HTML message matching current envelope id in current folder
-from current account using Emacs' built-in web browser (EWW)."
-  (himalaya--read-message-html
-   himalaya-id
-   (lambda (html-file)
-     (when pre-hook (funcall pre-hook))
-     (funcall himalaya-html-browse-function html-file))))
 
 (defun himalaya-read-current-message-plain (&optional preview)
   "Read message matching current envelope id in current folder from
@@ -221,16 +250,37 @@ envelope."
   (himalaya--read-current-message preview #'kill-current-buffer))
 
 (defun himalaya-read-current-message-raw ()
-  "Read raw message matching current envelope id in current folder
+  "Read raw message matching current envelope id in current mailbox
 from current account."
   (interactive)
   (himalaya--read-current-message-raw #'kill-current-buffer))
 
+(defun himalaya--browse-html (handle)
+  "Browse the first HTML part of HANDLE using
+`himalaya-html-browse-function'."
+  (let* ((part (or (himalaya--find-part handle "text/html")
+                   (user-error "No HTML part in this message")))
+         (charset (or (mail-content-type-get (mm-handle-type part) 'charset) "utf-8"))
+         (html (mm-decode-string (mm-get-part part) (intern (downcase charset))))
+         (file (make-temp-file "himalaya-" nil ".html"))
+         (coding-system-for-write 'utf-8))
+    (with-temp-file file
+      (insert "<meta charset=\"utf-8\">\n" html))
+    (funcall himalaya-html-browse-function file)))
+
 (defun himalaya-read-current-message-html ()
-  "Read HTML message matching current envelope id in current folder
-from current account using Emacs' built-in web browser (EWW)."
+  "Read the HTML part of the current message using
+`himalaya-html-browse-function'."
   (interactive)
-  (himalaya--read-current-message-html #'kill-current-buffer))
+  (if himalaya--mime-handles
+      (himalaya--browse-html himalaya--mime-handles)
+    (himalaya--read-message
+     himalaya-id
+     t
+     (lambda (msg)
+       (let ((handle (cdr (himalaya--dissect-message msg))))
+         (unwind-protect (himalaya--browse-html handle)
+           (mm-destroy-parts handle)))))))
 
 (defun himalaya-reply-to-current-message (&optional reply-all)
   "Open a new buffer with a reply template to the current email.
@@ -252,21 +302,31 @@ If called with \\[universal-argument], email will be REPLY-ALL."
      (setq himalaya-reply nil)
      (himalaya--generate-write-buffer (format "*Forward: %s*" himalaya-subject) tpl))))
 
+(defun himalaya--adjacent-envelope-id (id n)
+  "Return the id of the envelope N lines away from the envelope ID in
+the envelope list, or nil if there is none."
+  (when-let* ((buffer (get-buffer "*Himalaya Envelopes*")))
+    (with-current-buffer buffer
+      (save-excursion
+        (goto-char (point-min))
+        (while (and (not (eobp)) (not (equal (tabulated-list-get-id) id)))
+          (forward-line 1))
+        (when (and (not (eobp)) (zerop (forward-line n)) (not (eobp)))
+          (tabulated-list-get-id))))))
+
 (defun himalaya-next-message ()
-  "Go to the next email."
+  "Go to the message of the next envelope in the envelope list."
   (interactive)
-  (setq himalaya-id (prin1-to-string (1+ (string-to-number himalaya-id))))
-  (condition-case
-      nil (himalaya--read-current-message)
-    (t (user-error "At end of folder"))))
+  (setq himalaya-id (or (himalaya--adjacent-envelope-id himalaya-id 1)
+                        (user-error "At end of envelope list")))
+  (himalaya--read-current-message nil #'kill-current-buffer))
 
 (defun himalaya-prev-message ()
-  "Go to the previous message."
+  "Go to the message of the previous envelope in the envelope list."
   (interactive)
-  (when (string= himalaya-id "1")
-    (user-error "At beginning of folder"))
-  (setq himalaya-id (prin1-to-string (max 1 (1- (string-to-number himalaya-id)))))
-  (himalaya--read-current-message))
+  (setq himalaya-id (or (himalaya--adjacent-envelope-id himalaya-id -1)
+                        (user-error "At beginning of envelope list")))
+  (himalaya--read-current-message nil #'kill-current-buffer))
 
 (defun himalaya-read-message-at-point (&optional preview)
   "Pick the envelope at point and read its associated message. If
@@ -383,9 +443,10 @@ point) from current folder of current account."
     (define-key map (kbd "h") #'himalaya-read-current-message-html)
     map))
 
-(define-derived-mode himalaya-read-message-mode message-mode "Himalaya-Read"
+(define-derived-mode himalaya-read-message-mode special-mode "Himalaya-Read"
   "Message reading mode."
-  (setq mail-header-separator ""))
+  (add-hook 'kill-buffer-hook #'himalaya--destroy-mime-handles nil t)
+  (add-hook 'change-major-mode-hook #'himalaya--destroy-mime-handles nil t))
 
 (defvar himalaya-read-message-raw-mode-map
   (let ((map (make-sparse-keymap)))
